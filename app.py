@@ -62,51 +62,57 @@ def limpiar_acentos(texto):
 
 def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena, tema_general):
     """
-    Busca una imagen hiperrealista en el índice de Lexica usando el tema general,
-    la recorta inteligentemente a formato 16:9 y le quema los subtítulos legibles.
+    Descarga una imagen cinematográfica real burlando los bloqueos de Cloudflare
+    mediante cabeceras de navegación simuladas completas.
     """
     img = None
     
-    # Limpiamos términos superfluos del input para buscar conceptos puros (ej: "Pokemon Gengar")
-    busqueda_limpia = tema_general.lower().replace("que habilidades tiene", "").replace("documental", "").strip()
-    query_sanitizada = urllib.parse.quote(busqueda_limpia)
-    url_lexica = f"https://lexica.art/api/v1/search?q={query_sanitizada}"
+    # Cabeceras completas de simulación de navegador de escritorio para evitar bloqueos anti-bot (Cloudflare/AWS)
+    headers_humanos = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+    }
     
+    # Sanitizar concepto de búsqueda primario (ej: "pokemon gengar")
+    busqueda_concepto = tema_general.lower().replace("que habilidades tiene", "").replace("documental", "").strip()
+    query_api = urllib.parse.quote(busqueda_concepto)
+    
+    # INTENTO 1: Buscar imágenes de calidad pre-renderizadas en el índice de Lexica Art
     try:
-        response = requests.get(url_lexica, timeout=20)
+        url_lexica = f"https://lexica.art/api/v1/search?q={query_api}"
+        response = requests.get(url_lexica, headers=headers_humanos, timeout=15)
         if response.status_code == 200:
             data = response.json()
             if data.get("images") and len(data["images"]) > id_escena:
-                # Extraemos una imagen distinta del índice para cada bloque de escena
                 img_url = data["images"][id_escena]["src"]
-                img_res = requests.get(img_url, timeout=20)
+                # Descargar el archivo binario de la imagen usando las mismas cabeceras humanas
+                img_res = requests.get(img_url, headers=headers_humanos, timeout=15)
                 if img_res.status_code == 200:
                     img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
     except Exception:
         pass
 
-    # Sistema de Fallback 1: Si falla la búsqueda por tema, busca por las primeras palabras del prompt de Qwen
+    # INTENTO 2 (FALLBACK): Si el índice es bloqueado, forzar renderizado directo con Pollinations con prompt limpio
     if img is None:
         try:
-            prompt_corto = " ".join(prompt_texto.split()[:4])
-            url_fallback = f"https://lexica.art/api/v1/search?q={urllib.parse.quote(prompt_corto)}"
-            res = requests.get(url_fallback, timeout=15)
-            if res.status_code == 200:
-                data = res.json()
-                if data.get("images"):
-                    img_url = data["images"][0]["src"]
-                    img_res = requests.get(img_url, timeout=15)
-                    img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
+            prompt_directo = urllib.parse.quote(f"cinematic dark dramatic photo of {busqueda_concepto}")
+            url_pollinations = f"https://image.pollinations.ai/p/{prompt_directo}?width=1920&height=1080&nologo=true&seed={id_escena * 10}"
+            img_res = requests.get(url_pollinations, headers=headers_humanos, timeout=20)
+            if img_res.status_code == 200:
+                img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
         except Exception:
             pass
 
-    # Sistema de Fallback 2: Lienzo plano clásico si la red o las APIs externas fallan por completo
+    # INTENTO 3 (FALLBACK DE SEGURIDAD): Lienzo de color plano si todo el tráfico externo es bloqueado
     if img is None:
         img = Image.new('RGB', (1920, 1080), color=color_hex)
         d_fail = ImageDraw.Draw(img)
         d_fail.rectangle([(40, 40), (1880, 1040)], outline="#ffffff", width=4)
     else:
-        # Ajustar y recortar la imagen de forma exacta a 1920x1080 (Proporción Cinematográfica 16:9)
+        # Reescalar y recortar inteligentemente la imagen obtenida a proporción horizontal exacta 16:9 (1920x1080)
         target_width = 1920
         target_height = 1080
         img_aspect = img.width / img.height
@@ -125,7 +131,7 @@ def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena, tema_gener
             top = (new_height - target_height) // 2
             img = img.crop((0, top, target_width, top + target_height))
 
-    # Dibujar la barra negra inferior de subtítulos translúcida (65% opacidad)
+    # Construir y quemar los bloques de subtítulos translúcidos inferiores
     texto_limpio = limpiar_acentos(texto_narracion)
     palabras = texto_limpio.split()
     lineas = []
