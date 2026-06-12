@@ -22,12 +22,10 @@ st.write("Escribe un tema y deja que la IA de Alibaba diseñe el guión y los pr
 # =====================================================================
 st.sidebar.header("Configuración de IA")
 
-# 1. Intentar leer la clave directamente desde Streamlit Secrets de forma automática
 if "OPENROUTER_API_KEY" in st.secrets and st.secrets["OPENROUTER_API_KEY"].strip() != "":
     api_key = st.secrets["OPENROUTER_API_KEY"]
     st.sidebar.success("🔒 API Key cargada automáticamente desde Secrets.")
 else:
-    # 2. Respaldo por si ejecutas el código en local o no has configurado los Secrets todavía
     api_key = st.sidebar.text_input(
         "OpenRouter API Key:", 
         type="password", 
@@ -47,7 +45,6 @@ for carpeta in ["temp_audio", "temp_images", "temp_scenes"]:
 # =====================================================================
 
 def obtener_duracion_audio(archivo_audio):
-    """Utiliza ffprobe para medir la duración del archivo de audio."""
     comando = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {archivo_audio}"
     duracion = subprocess.check_output(comando, shell=True)
     return float(duracion.strip())
@@ -68,7 +65,6 @@ def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena):
     Descarga una imagen real generada por IA basándose en el prompt de Qwen,
     y le dibuja una barra de subtítulos transparente con la narración limpia en español.
     """
-    # 1. Intentar obtener una imagen real de IA usando Pollinations (Servicio gratuito sin Key)
     prompt_sanitizado = urllib.parse.quote(prompt_texto)
     url_ia_imagen = f"https://image.pollinations.ai/p/{prompt_sanitizado}?width=1920&height=1080&nologo=true&seed={id_escena * 42}"
     
@@ -78,13 +74,11 @@ def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena):
             img = Image.open(io.BytesIO(response.content)).convert('RGB')
         else:
             raise Exception("Fallo en la respuesta del servidor de imágenes")
-    except Exception as e:
-        # Fallback de seguridad: crear un lienzo del color sugerido por Qwen
+    except Exception:
         img = Image.new('RGB', (1920, 1080), color=color_hex)
         d_fail = ImageDraw.Draw(img)
         d_fail.rectangle([(40, 40), (1880, 1040)], outline="#ffffff", width=4)
 
-    # 2. Dibujar la barra de subtítulos translúcida en la parte inferior
     texto_limpio = limpiar_acentos(texto_narracion)
     
     palabras = texto_limpio.split()
@@ -98,31 +92,24 @@ def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena):
             linea_actual = palabra
     lineas.append(linea_actual.strip())
     
-    # Calcular altura de la barra negra inferior según las líneas de subtítulo
     num_lineas = min(len(lineas), 3)
     altura_barra = 80 + (num_lineas * 50)
     
-    # Crear una capa de transparencia
     capa_transparente = Image.new('RGBA', img.size, (0, 0, 0, 0))
     draw_layer = ImageDraw.Draw(capa_transparente)
-    # Dibujar rectángulo negro con 65% de opacidad (165/255)
     draw_layer.rectangle([(0, 1080 - altura_barra), (1920, 1080)], fill=(0, 0, 0, 165))
     
-    # Fusionar la capa transparente con la imagen principal
     img = Image.alpha_composite(img.convert('RGBA'), capa_transparente).convert('RGB')
     d = ImageDraw.Draw(img)
     
-    # Cargar tipografías por defecto
     try:
         from PIL import ImageFont
         fuente_subtitulo = ImageFont.load_default(size=42)
     except Exception:
         fuente_subtitulo = ImageFont.load_default()
         
-    # Escribir el texto centrado sobre la barra oscura
     y_offset = 1080 - altura_barra + 35
     for linea in lineas[:3]:
-        # Estimar ancho de línea para centrarlo horizontalmente
         ancho_estimado = len(linea) * 19
         x_pos = max(100, (1920 - ancho_estimado) // 2)
         d.text((x_pos, y_offset), linea, fill="#ffffff", font=fuente_subtitulo)
@@ -131,7 +118,6 @@ def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena):
     img.save(f"temp_images/imagen_{id_escena}.png")
 
 def crear_clip(ruta_img, ruta_aud, duracion, ruta_out):
-    """Genera un archivo MP4 sincronizando audio e imagen."""
     comando = (
         f"ffmpeg -y -loop 1 -framerate 25 -i {ruta_img} -i {ruta_aud} "
         f"-c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p "
@@ -204,12 +190,9 @@ if st.button("🚀 Lanzar Pipeline"):
         status_placeholder = st.empty()
         
         try:
-            # 1. Llamada robusta a Qwen
             response_data = consultar_qwen_con_retries(tema, api_key)
-            
             raw_content = response_data["choices"][0]["message"]["content"].strip()
             
-            # Sanitizar la respuesta de Markdown usando caracter unicode chr(96) para backticks
             ticks = chr(96) * 3
             if raw_content.startswith(f"{ticks}json"):
                 raw_content = raw_content.replace(f"{ticks}json", "").replace(ticks, "").strip()
@@ -220,7 +203,6 @@ if st.button("🚀 Lanzar Pipeline"):
             status_placeholder.success("¡Guión estructurado correctamente por Qwen!")
             barra_progreso.progress(20)
             
-            # 2. Generación y procesamiento de elementos multimedia
             lista_clips = []
             total_escenas = len(ESCENAS_JSON)
             
@@ -234,7 +216,7 @@ if st.button("🚀 Lanzar Pipeline"):
                 tts.save(r_audio)
                 dur = obtener_duracion_audio(r_audio)
                 
-                # B. Imagen (Realizada ahora mediante descarga por IA de Pollinations)
+                # B. Imagen
                 r_imagen = f"temp_images/imagen_{id_e}.png"
                 crear_imagen(escena["visual"], escena["texto"], escena["color"], id_e)
                 
@@ -245,7 +227,7 @@ if st.button("🚀 Lanzar Pipeline"):
                 lista_clips.append(r_clip)
                 barra_progreso.progress(int(20 + ((i + 1) / total_escenas) * 60))
                 
-            # 3. Concatenación final de las escenas con FFmpeg
+            # Concatenación final de las escenas
             status_placeholder.text("Ensamblando todas las escenas con FFmpeg...")
             with open("lista_videos.txt", "w") as f:
                 for clip in lista_clips:
@@ -261,7 +243,6 @@ if st.button("🚀 Lanzar Pipeline"):
             barra_progreso.progress(100)
             status_placeholder.text("¡Video documental renderizado con éxito!")
             
-            # 4. Mostrar y permitir descargar el archivo
             if os.path.exists(video_final):
                 with open(video_final, "rb") as file:
                     st.video(file.read())
@@ -275,11 +256,3 @@ if st.button("🚀 Lanzar Pipeline"):
                 
         except Exception as e:
             st.error(f"Error crítico en el flujo del sistema: {e}")
-```
-eof
-
-### Cambios realizados para corregir el error:
-1. **Saneamiento absoluto de backticks (` ``` `):** He eliminado cualquier rastro de la cadena literal de acentos graves dentro del código Python. He usado `chr(96) * 3` en su lugar. Así, el motor de parsing de Streamlit no se confundirá y el archivo se ejecutará de forma impecable.
-2. **Estructura limpia:** No se ha colado ningún texto de conversación fuera de los bloques de código al final del documento.
-3. **Marcadores de progreso estructurados:** He añadido los comentarios especiales `
-Sube este código final limpio a tu rama `main` en GitHub y tu aplicación web en Streamlit Cloud volverá a estar activa de inmediato sin ningún tipo de error. ¡A disfrutar de la generación de videos!
