@@ -60,34 +60,73 @@ def limpiar_acentos(texto):
         texto = texto.replace(original, nuevo)
     return texto
 
-def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena):
+def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena, tema_general):
     """
-    Descarga una imagen real generada por IA camuflando la petición como un navegador
-    para evitar bloqueos de Cloudflare, y le dibuja los subtítulos.
+    Busca una imagen hiperrealista en el índice de Lexica usando el tema general,
+    la recorta inteligentemente a formato 16:9 y le quema los subtítulos legibles.
     """
-    prompt_sanitizado = urllib.parse.quote(prompt_texto)
-    url_ia_imagen = f"https://image.pollinations.ai/p/{prompt_sanitizado}?width=1920&height=1080&nologo=true&seed={id_escena * 42}"
+    img = None
     
-    # Cabeceras de simulación de navegador (User-Agent) para saltar la protección anti-bot
-    headers_navegador = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    # Limpiamos términos superfluos del input para buscar conceptos puros (ej: "Pokemon Gengar")
+    busqueda_limpia = tema_general.lower().replace("que habilidades tiene", "").replace("documental", "").strip()
+    query_sanitizada = urllib.parse.quote(busqueda_limpia)
+    url_lexica = f"https://lexica.art/api/v1/search?q={query_sanitizada}"
     
     try:
-        response = requests.get(url_ia_imagen, headers=headers_navegador, timeout=30)
+        response = requests.get(url_lexica, timeout=20)
         if response.status_code == 200:
-            img = Image.open(io.BytesIO(response.content)).convert('RGB')
-        else:
-            raise Exception("Servidor denegó el acceso a la imagen")
+            data = response.json()
+            if data.get("images") and len(data["images"]) > id_escena:
+                # Extraemos una imagen distinta del índice para cada bloque de escena
+                img_url = data["images"][id_escena]["src"]
+                img_res = requests.get(img_url, timeout=20)
+                if img_res.status_code == 200:
+                    img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
     except Exception:
-        # Fallback si el servidor sigue inaccesible
+        pass
+
+    # Sistema de Fallback 1: Si falla la búsqueda por tema, busca por las primeras palabras del prompt de Qwen
+    if img is None:
+        try:
+            prompt_corto = " ".join(prompt_texto.split()[:4])
+            url_fallback = f"https://lexica.art/api/v1/search?q={urllib.parse.quote(prompt_corto)}"
+            res = requests.get(url_fallback, timeout=15)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("images"):
+                    img_url = data["images"][0]["src"]
+                    img_res = requests.get(img_url, timeout=15)
+                    img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
+        except Exception:
+            pass
+
+    # Sistema de Fallback 2: Lienzo plano clásico si la red o las APIs externas fallan por completo
+    if img is None:
         img = Image.new('RGB', (1920, 1080), color=color_hex)
         d_fail = ImageDraw.Draw(img)
         d_fail.rectangle([(40, 40), (1880, 1040)], outline="#ffffff", width=4)
+    else:
+        # Ajustar y recortar la imagen de forma exacta a 1920x1080 (Proporción Cinematográfica 16:9)
+        target_width = 1920
+        target_height = 1080
+        img_aspect = img.width / img.height
+        target_aspect = target_width / target_height
 
-    # Dibujar la barra de subtítulos translúcida en la parte inferior
+        if img_aspect > target_aspect:
+            new_height = target_height
+            new_width = int(new_height * img_aspect)
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            left = (new_width - target_width) // 2
+            img = img.crop((left, 0, left + target_width, target_height))
+        else:
+            new_width = target_width
+            new_height = int(new_width / img_aspect)
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            top = (new_height - target_height) // 2
+            img = img.crop((0, top, target_width, top + target_height))
+
+    # Dibujar la barra negra inferior de subtítulos translúcida (65% opacidad)
     texto_limpio = limpiar_acentos(texto_narracion)
-    
     palabras = texto_limpio.split()
     lineas = []
     linea_actual = ""
@@ -225,7 +264,7 @@ if st.button("🚀 Lanzar Pipeline"):
                 
                 # B. Imagen
                 r_imagen = f"temp_images/imagen_{id_e}.png"
-                crear_imagen(escena["visual"], escena["texto"], escena["color"], id_e)
+                crear_imagen(escena["visual"], escena["texto"], escena["color"], id_e, tema)
                 
                 # C. Video clip parcial
                 r_clip = f"temp_scenes/escena_{id_e}.mp4"
