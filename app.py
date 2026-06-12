@@ -1,10 +1,11 @@
 import streamlit as st
 import os
 import json
+import time
+import requests
 import subprocess
 from gtts import gTTS
 from PIL import Image, ImageDraw
-from openai import OpenAI
 
 # =====================================================================
 # CONFIGURACIÓN DE LA INTERFAZ DE STREAMLIT
@@ -117,6 +118,68 @@ def crear_clip(ruta_img, ruta_aud, duracion, ruta_out):
     subprocess.run(comando, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 # =====================================================================
+# MOTOR DE CONEXIÓN CON REINTENTOS PARA QWEN3.7-MAX
+# =====================================================================
+def consultar_qwen_con_retries(tema_solicitado, key):
+    """
+    Realiza una consulta HTTP directa a OpenRouter con reintentos exponenciales.
+    Bypassa cualquier bug o bloqueo de sockets del SDK de OpenAI en Streamlit.
+    """
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://streamlit.io",
+        "X-Title": "Qwen Documental Studio"
+    }
+    
+    prompt_sistema = (
+        "Actúas como un guionista profesional de documentales. Tu tarea es estructurar un "
+        "video corto de 1 minuto sobre el tema que te dará el usuario. Debes dividir el video en exactamente 5 bloques o escenas. "
+        "Debes responder EXCLUSIVAMENTE con un array JSON válido, sin textos introductorios ni bloques de código markdown. "
+        "Cada objeto del array debe contener exactamente las siguientes llaves:\n"
+        "- id: entero consecutivo (1 al 5)\n"
+        "- texto: la narración en español que leerá el locutor (aproximadamente 10-12 segundos de lectura)\n"
+        "- color: un código hexadecimal oscuro representativo de la atmósfera de la escena (ej. #1a2a3a)\n"
+        "- visual: un prompt detallado en inglés para una IA generadora de imágenes hiperrealistas (estilo cinematográfico)."
+    )
+    
+    payload = {
+        "model": "qwen/qwen3.7-max",
+        "messages": [
+            {"role": "system", "content": prompt_sistema},
+            {"role": "user", "content": f"Tema del documental: {tema_solicitado}"}
+        ],
+        "temperature": 0.7
+    }
+    
+    reintentos = 5
+    delay_inicial = 1
+    
+    for intento in range(reintentos):
+        try:
+            status_placeholder.text(f"Conectando con Qwen3.7-Max (Intento {intento + 1}/{reintentos})...")
+            # Enviar petición POST directa con timeout establecido de 45 segundos
+            response = requests.post(url, headers=headers, json=payload, timeout=45)
+            
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 429:
+                status_placeholder.warning(f"Límite de peticiones alcanzado. Esperando para reintentar...")
+                time.sleep(delay_inicial * 2)
+            else:
+                raise Exception(f"Servidor respondió con código {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            if intento == reintentos - 1:
+                # Si es el último intento fallido, lanzamos la excepción final
+                raise Exception(f"No se pudo establecer conexión tras {reintentos} intentos. Detalle: {e}")
+            
+            # Esperar antes del siguiente intento con incremento exponencial
+            time.sleep(delay_inicial)
+            delay_inicial *= 2
+
+# =====================================================================
 # EJECUCIÓN DEL PIPELINE (BOTÓN PRINCIPAL)
 # =====================================================================
 if st.button("🚀 Lanzar Pipeline"):
@@ -124,39 +187,15 @@ if st.button("🚀 Lanzar Pipeline"):
         st.error("Por favor, introduce tu API Key de OpenRouter.")
     else:
         barra_progreso = st.progress(0)
-        texto_estado = st.empty()
-        
-        texto_estado.text("Qwen3.7-Max está analizando el tema y redactando el guión...")
-        
-        client = OpenAI(
-            base_url="[https://openrouter.ai/api/v1](https://openrouter.ai/api/v1)",
-            api_key=api_key,
-        )
-        
-        prompt_sistema = (
-            "Actúas como un guionista profesional de documentales. Tu tarea es estructurar un "
-            "video corto de 1 minuto sobre el tema que te dará el usuario. Debes dividir el video en exactamente 5 bloques. "
-            "Debes responder EXCLUSIVAMENTE con un array JSON válido, sin textos introductorios ni bloques markdown. "
-            "Cada objeto del array debe contener exactamente las siguientes llaves:\n"
-            "- id: entero consecutivo (1 al 5)\n"
-            "- texto: la narración en español que leerá el locutor (unos 10-12 segundos de lectura)\n"
-            "- color: un código hexadecimal oscuro representativo de la atmósfera de la escena (ej. #1a2a3a)\n"
-            "- visual: un prompt detallado en inglés para una IA generadora de imágenes hiperrealistas."
-        )
+        status_placeholder = st.empty()
         
         try:
-            response = client.chat.completions.create(
-                model="qwen/qwen3.7-max",
-                messages=[
-                    {"role": "system", "content": prompt_sistema},
-                    {"role": "user", "content": f"Tema del documental: {tema}"}
-                ],
-                temperature=0.7
-            )
+            # 1. Llamada robusta a Qwen
+            response_data = consultar_qwen_con_retries(tema, api_key)
             
-            raw_content = response.choices[0].message.content.strip()
+            raw_content = response_data["choices"][0]["message"]["content"].strip()
             
-            # Usamos códigos hexadecimales (\x60) para simular los acentos graves de Markdown de forma segura
+            # Sanitizar posibles bloques de código que devuelva la IA
             ticks = "\x60\x60\x60"
             if raw_content.startswith(f"{ticks}json"):
                 raw_content = raw_content.replace(f"{ticks}json", "").replace(ticks, "").strip()
@@ -164,15 +203,16 @@ if st.button("🚀 Lanzar Pipeline"):
                 raw_content = raw_content.replace(ticks, "").strip()
             
             ESCENAS_JSON = json.loads(raw_content)
-            texto_estado.text("¡Guión estructurado correctamente por Qwen!")
+            status_placeholder.success("¡Guión estructurado correctamente por Qwen!")
             barra_progreso.progress(20)
             
+            # 2. Generación y procesamiento de elementos multimedia
             lista_clips = []
             total_escenas = len(ESCENAS_JSON)
             
             for i, escena in enumerate(ESCENAS_JSON):
                 id_e = escena["id"]
-                texto_estado.text(f"Procesando escena {id_e} de {total_escenas}...")
+                status_placeholder.text(f"Generando escena {id_e} de {total_escenas}...")
                 
                 # A. Audio
                 r_audio = f"temp_audio/audio_{id_e}.mp3"
@@ -191,8 +231,8 @@ if st.button("🚀 Lanzar Pipeline"):
                 lista_clips.append(r_clip)
                 barra_progreso.progress(int(20 + ((i + 1) / total_escenas) * 60))
                 
-            # Concatenación final
-            texto_estado.text("Ensamblando todas las escenas con FFmpeg...")
+            # 3. Concatenación final de las escenas
+            status_placeholder.text("Ensamblando todas las escenas con FFmpeg...")
             with open("lista_videos.txt", "w") as f:
                 for clip in lista_clips:
                     f.write(f"file '{clip}'\n")
@@ -205,8 +245,9 @@ if st.button("🚀 Lanzar Pipeline"):
                 os.remove("lista_videos.txt")
                 
             barra_progreso.progress(100)
-            texto_estado.text("¡Video documental renderizado con éxito!")
+            status_placeholder.text("¡Video documental renderizado con éxito!")
             
+            # 4. Mostrar y permitir descargar el archivo
             if os.path.exists(video_final):
                 with open(video_final, "rb") as file:
                     st.video(file.read())
