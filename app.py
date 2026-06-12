@@ -3,7 +3,7 @@ import os
 import json
 import subprocess
 from gtts import gTTS
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from openai import OpenAI
 
 # =====================================================================
@@ -14,9 +14,22 @@ st.set_page_config(page_title="Qwen3.7 Documental Studio", page_icon="🎬", lay
 st.title("🎬 Productor de Documentales con Qwen3.7-Max")
 st.write("Escribe un tema y deja que la IA de Alibaba diseñe el guión y los prompts visuales en tiempo real.")
 
-# Configuración de la API Key en la barra lateral de forma segura
+# =====================================================================
+# CONFIGURACIÓN DE CREDENCIALES (SECRETS / BARRA LATERAL)
+# =====================================================================
 st.sidebar.header("Configuración de IA")
-api_key = st.sidebar.text_input("OpenRouter API Key:", type="password", help="Consigue tu clave en openrouter.ai")
+
+# 1. Intentar leer la clave directamente desde Streamlit Secrets de forma automática
+if "OPENROUTER_API_KEY" in st.secrets and st.secrets["OPENROUTER_API_KEY"].strip() != "":
+    api_key = st.secrets["OPENROUTER_API_KEY"]
+    st.sidebar.success("🔒 API Key cargada automáticamente desde Secrets.")
+else:
+    # 2. Respaldo por si ejecutas el código en local o no has configurado los Secrets todavía
+    api_key = st.sidebar.text_input(
+        "OpenRouter API Key:", 
+        type="password", 
+        help="Introduce tu clave manualmente o configúrala en el apartado Secrets de Streamlit Cloud."
+    )
 
 # Inputs principales en la pantalla central
 tema = st.text_input("Tema del documental:", "El origen templario de un castillo medieval")
@@ -62,7 +75,7 @@ def crear_clip(ruta_img, ruta_aud, duracion, ruta_out):
 # =====================================================================
 if st.button("🚀 Lanzar Pipeline"):
     if not api_key:
-        st.error("Por favor, introduce tu API Key de OpenRouter en la barra lateral izquierda.")
+        st.error("Por favor, introduce tu API Key de OpenRouter en la barra lateral izquierda o en el apartado de Secrets.")
     else:
         barra_progreso = st.progress(0)
         texto_estado = st.empty()
