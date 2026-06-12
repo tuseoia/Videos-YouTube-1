@@ -62,23 +62,30 @@ def limpiar_acentos(texto):
 
 def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena):
     """
-    Descarga una imagen real generada por IA basándose en el prompt de Qwen,
-    y le dibuja una barra de subtítulos transparente con la narración limpia en español.
+    Descarga una imagen real generada por IA camuflando la petición como un navegador
+    para evitar bloqueos de Cloudflare, y le dibuja los subtítulos.
     """
     prompt_sanitizado = urllib.parse.quote(prompt_texto)
     url_ia_imagen = f"https://image.pollinations.ai/p/{prompt_sanitizado}?width=1920&height=1080&nologo=true&seed={id_escena * 42}"
     
+    # Cabeceras de simulación de navegador (User-Agent) para saltar la protección anti-bot
+    headers_navegador = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
     try:
-        response = requests.get(url_ia_imagen, timeout=25)
+        response = requests.get(url_ia_imagen, headers=headers_navegador, timeout=30)
         if response.status_code == 200:
             img = Image.open(io.BytesIO(response.content)).convert('RGB')
         else:
-            raise Exception("Fallo en la respuesta del servidor de imágenes")
+            raise Exception("Servidor denegó el acceso a la imagen")
     except Exception:
+        # Fallback si el servidor sigue inaccesible
         img = Image.new('RGB', (1920, 1080), color=color_hex)
         d_fail = ImageDraw.Draw(img)
         d_fail.rectangle([(40, 40), (1880, 1040)], outline="#ffffff", width=4)
 
+    # Dibujar la barra de subtítulos translúcida en la parte inferior
     texto_limpio = limpiar_acentos(texto_narracion)
     
     palabras = texto_limpio.split()
