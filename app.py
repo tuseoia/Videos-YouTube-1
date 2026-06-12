@@ -3,7 +3,7 @@ import os
 import json
 import subprocess
 from gtts import gTTS
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from openai import OpenAI
 
 # =====================================================================
@@ -19,10 +19,12 @@ st.write("Escribe un tema y deja que la IA de Alibaba diseñe el guión y los pr
 # =====================================================================
 st.sidebar.header("Configuración de IA")
 
+# 1. Intentar leer la clave directamente desde Streamlit Secrets de forma automática
 if "OPENROUTER_API_KEY" in st.secrets and st.secrets["OPENROUTER_API_KEY"].strip() != "":
     api_key = st.secrets["OPENROUTER_API_KEY"]
     st.sidebar.success("🔒 API Key cargada automáticamente desde Secrets.")
 else:
+    # 2. Respaldo por si ejecutas el código en local o no has configurado los Secrets todavía
     api_key = st.sidebar.text_input(
         "OpenRouter API Key:", 
         type="password", 
@@ -48,19 +50,19 @@ def obtener_duracion_audio(archivo_audio):
 
 def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena):
     """Genera una tarjeta visual de alta definición, legible y limpia para el MVP."""
-    # Crear lienzo Full HD
     img = Image.new('RGB', (1920, 1080), color=color_hex)
     d = ImageDraw.Draw(img)
     
-    # Cargar fuente por defecto escalada (Pillow 10.1.0+ nativo)
+    # Cargar fuente por defecto escalada
     try:
+        from PIL import ImageFont
         fuente_titulo = ImageFont.load_default(size=60)
         fuente_cuerpo = ImageFont.load_default(size=40)
     except Exception:
         fuente_titulo = ImageFont.load_default()
         fuente_cuerpo = ImageFont.load_default()
     
-    # Dibujar un marco elegante en los bordes para demostrar que hay video activo
+    # Dibujar un marco elegante en los bordes
     d.rectangle([(40, 40), (1880, 1040)], outline="#ffffff", width=4)
     
     # Cabecera de la escena
@@ -69,7 +71,6 @@ def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena):
     # Sección 1: Lo que ideó la IA para el prompt de imagen
     d.text((100, 250), "PROMPT VISUAL ENVIADO A LA IA:", fill="#aaaaaa", font=fuente_cuerpo)
     
-    # Ajustar líneas del prompt para que no se salgan de la pantalla
     palabras_prompt = prompt_texto.split()
     lineas_prompt = []
     linea_actual = ""
@@ -82,11 +83,11 @@ def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena):
     lineas_prompt.append(linea_actual.strip())
     
     y_offset = 320
-    for linea in lineas_prompt[:4]: # Límite de 4 líneas para el prompt
+    for linea in lineas_prompt[:4]:
         d.text((100, y_offset), linea, fill="#ffffff", font=fuente_cuerpo)
         y_offset += 55
         
-    # Sección 2: Lo que está diciendo el locutor en este instante
+    # Sección 2: Lo que está diciendo el locutor
     d.text((100, 650), "AUDIO NARRACIÓN ACTUAL (SUBTÍTULO):", fill="#ffcc00", font=fuente_cuerpo)
     
     palabras_nar = texto_narracion.split()
@@ -105,7 +106,7 @@ def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena):
         d.text((100, y_offset), linea, fill="#ffffff", font=fuente_cuerpo)
         y_offset += 55
 
-    img.save(ruta_imagen)
+    img.save(f"temp_images/imagen_{id_escena}.png")
 
 def crear_clip(ruta_img, ruta_aud, duracion, ruta_out):
     comando = (
@@ -128,7 +129,7 @@ if st.button("🚀 Lanzar Pipeline"):
         texto_estado.text("Qwen3.7-Max está analizando el tema y redactando el guión...")
         
         client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
+            base_url="[https://openrouter.ai/api/v1](https://openrouter.ai/api/v1)",
             api_key=api_key,
         )
         
@@ -154,12 +155,13 @@ if st.button("🚀 Lanzar Pipeline"):
             )
             
             raw_content = response.choices[0].message.content.strip()
-            if raw_content.startswith("```json"):
-                raw_content = raw_content.replace("
-```json", "").replace("```", "").strip()
-            elif raw_content.startswith("```"):
-                raw_content = raw_content.replace("
-```", "").strip()
+            
+            # Usamos códigos hexadecimales (\x60) para simular los acentos graves de Markdown de forma segura
+            ticks = "\x60\x60\x60"
+            if raw_content.startswith(f"{ticks}json"):
+                raw_content = raw_content.replace(f"{ticks}json", "").replace(ticks, "").strip()
+            elif raw_content.startswith(ticks):
+                raw_content = raw_content.replace(ticks, "").strip()
             
             ESCENAS_JSON = json.loads(raw_content)
             texto_estado.text("¡Guión estructurado correctamente por Qwen!")
@@ -178,11 +180,11 @@ if st.button("🚀 Lanzar Pipeline"):
                 tts.save(r_audio)
                 dur = obtener_duracion_audio(r_audio)
                 
-                # B. Imagen (Con la nueva función de diseño escalado y textos de la IA)
+                # B. Imagen
                 r_imagen = f"temp_images/imagen_{id_e}.png"
                 crear_imagen(escena["visual"], escena["texto"], escena["color"], id_e)
                 
-                # C. Video clip parcial (.mp4)
+                # C. Video clip parcial
                 r_clip = f"temp_scenes/escena_{id_e}.mp4"
                 crear_clip(r_imagen, r_audio, dur, r_clip)
                 
