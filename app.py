@@ -3,8 +3,6 @@ import os
 import json
 import time
 import requests
-import urllib.parse
-import io
 import subprocess
 from gtts import gTTS
 from PIL import Image, ImageDraw
@@ -60,78 +58,60 @@ def limpiar_acentos(texto):
         texto = texto.replace(original, nuevo)
     return texto
 
-def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena, tema_general):
+def crear_imagen_storyboard(prompt_texto, texto_narracion, color_hex, id_escena):
     """
-    Descarga una imagen cinematográfica real burlando los bloqueos de Cloudflare
-    mediante cabeceras de navegación simuladas completas.
+    Genera una tarjeta gráfica procedural avanzada estilo Storyboard Cinematográfico.
+    Evita las llamadas de red externas bloqueadas por Cloudflare en Streamlit Cloud.
     """
-    img = None
+    # 1. Crear un lienzo base con un gradiente lineal simulado para que tenga textura visual
+    img = Image.new('RGB', (1920, 1080), color="#111116")
+    d = ImageDraw.Draw(img)
     
-    # Cabeceras completas de simulación de navegador de escritorio para evitar bloqueos anti-bot (Cloudflare/AWS)
-    headers_humanos = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache"
-    }
+    # Dibujar líneas de cuadrícula técnica cinematográfica (Regla de los tercios)
+    d.line([(640, 0), (640, 1080)], fill="#22222b", width=2)
+    d.line([(1280, 0), (1280, 1080)], fill="#22222b", width=2)
+    d.line([(0, 360), (1920, 360)], fill="#22222b", width=2)
+    d.line([(0, 720), (1920, 720)], fill="#22222b", width=2)
     
-    # Sanitizar concepto de búsqueda primario (ej: "pokemon gengar")
-    busqueda_concepto = tema_general.lower().replace("que habilidades tiene", "").replace("documental", "").strip()
-    query_api = urllib.parse.quote(busqueda_concepto)
+    # Dibujar una caja central con el color temático sugerido por Qwen (ej: morado de Gengar)
+    d.rectangle([(200, 150), (1720, 650)], fill=color_hex, outline="#ffffff", width=3)
     
-    # INTENTO 1: Buscar imágenes de calidad pre-renderizadas en el índice de Lexica Art
+    # Añadir elementos de interfaz de cámara de video (Look cinemático)
+    d.rectangle([(60, 60), (1860, 1020)], outline="#33333f", width=2) # Marco externo
+    d.text((100, 80), "● REC", fill="#ff3333")
+    d.text((1750, 80), "16:9 4K Realtime", fill="#ffffff")
+    
+    # Cargar tipografías nativas de Pillow
     try:
-        url_lexica = f"https://lexica.art/api/v1/search?q={query_api}"
-        response = requests.get(url_lexica, headers=headers_humanos, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("images") and len(data["images"]) > id_escena:
-                img_url = data["images"][id_escena]["src"]
-                # Descargar el archivo binario de la imagen usando las mismas cabeceras humanas
-                img_res = requests.get(img_url, headers=headers_humanos, timeout=15)
-                if img_res.status_code == 200:
-                    img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
+        from PIL import ImageFont
+        fuente_meta = ImageFont.load_default(size=32)
+        fuente_subtitulo = ImageFont.load_default(size=42)
     except Exception:
-        pass
-
-    # INTENTO 2 (FALLBACK): Si el índice es bloqueado, forzar renderizado directo con Pollinations con prompt limpio
-    if img is None:
-        try:
-            prompt_directo = urllib.parse.quote(f"cinematic dark dramatic photo of {busqueda_concepto}")
-            url_pollinations = f"https://image.pollinations.ai/p/{prompt_directo}?width=1920&height=1080&nologo=true&seed={id_escena * 10}"
-            img_res = requests.get(url_pollinations, headers=headers_humanos, timeout=20)
-            if img_res.status_code == 200:
-                img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
-        except Exception:
-            pass
-
-    # INTENTO 3 (FALLBACK DE SEGURIDAD): Lienzo de color plano si todo el tráfico externo es bloqueado
-    if img is None:
-        img = Image.new('RGB', (1920, 1080), color=color_hex)
-        d_fail = ImageDraw.Draw(img)
-        d_fail.rectangle([(40, 40), (1880, 1040)], outline="#ffffff", width=4)
-    else:
-        # Reescalar y recortar inteligentemente la imagen obtenida a proporción horizontal exacta 16:9 (1920x1080)
-        target_width = 1920
-        target_height = 1080
-        img_aspect = img.width / img.height
-        target_aspect = target_width / target_height
-
-        if img_aspect > target_aspect:
-            new_height = target_height
-            new_width = int(new_height * img_aspect)
-            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            left = (new_width - target_width) // 2
-            img = img.crop((left, 0, left + target_width, target_height))
+        fuente_meta = ImageFont.load_default()
+        fuente_subtitulo = ImageFont.load_default()
+        
+    # Colocar los datos técnicos del prompt de la IA dentro de la caja de diseño
+    d.text((250, 180), f"STORYBOARD COMPONENT - ESCENA {id_escena} / 5", fill="#ffcc00", font=fuente_meta)
+    d.text((250, 240), "PROMPT ASIGNADO PARA RENDERIZADO FINAL:", fill="#aaaaaa", font=fuente_meta)
+    
+    # Ajustar líneas del prompt visual
+    palabras_prompt = limpiar_acentos(prompt_texto).split()
+    lineas_prompt = []
+    linea_actual = ""
+    for palabra in palabras_prompt:
+        if len(linea_actual + " " + palabra) < 75:
+            linea_actual += " " + palabra
         else:
-            new_width = target_width
-            new_height = int(new_width / img_aspect)
-            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            top = (new_height - target_height) // 2
-            img = img.crop((0, top, target_width, top + target_height))
+            lineas_prompt.append(linea_actual.strip())
+            linea_actual = palabra
+    lineas_prompt.append(linea_actual.strip())
+    
+    y_p = 300
+    for linea in lineas_prompt[:5]:
+        d.text((250, y_p), linea, fill="#ffffff", font=fuente_meta)
+        y_p += 45
 
-    # Construir y quemar los bloques de subtítulos translúcidos inferiores
+    # 2. Dibujar la barra de subtítulos translúcida clásica abajo
     texto_limpio = limpiar_acentos(texto_narracion)
     palabras = texto_limpio.split()
     lineas = []
@@ -149,17 +129,11 @@ def crear_imagen(prompt_texto, texto_narracion, color_hex, id_escena, tema_gener
     
     capa_transparente = Image.new('RGBA', img.size, (0, 0, 0, 0))
     draw_layer = ImageDraw.Draw(capa_transparente)
-    draw_layer.rectangle([(0, 1080 - altura_barra), (1920, 1080)], fill=(0, 0, 0, 165))
+    draw_layer.rectangle([(0, 1080 - altura_barra), (1920, 1080)], fill=(0, 0, 0, 195)) # Un poco más opaco para legibilidad
     
     img = Image.alpha_composite(img.convert('RGBA'), capa_transparente).convert('RGB')
     d = ImageDraw.Draw(img)
     
-    try:
-        from PIL import ImageFont
-        fuente_subtitulo = ImageFont.load_default(size=42)
-    except Exception:
-        fuente_subtitulo = ImageFont.load_default()
-        
     y_offset = 1080 - altura_barra + 35
     for linea in lineas[:3]:
         ancho_estimado = len(linea) * 19
@@ -268,9 +242,9 @@ if st.button("🚀 Lanzar Pipeline"):
                 tts.save(r_audio)
                 dur = obtener_duracion_audio(r_audio)
                 
-                # B. Imagen
+                # B. Imagen de Storyboard Dinámica (Bypassa el bloqueo de red de la nube)
                 r_imagen = f"temp_images/imagen_{id_e}.png"
-                crear_imagen(escena["visual"], escena["texto"], escena["color"], id_e, tema)
+                crear_imagen_storyboard(escena["visual"], escena["texto"], escena["color"], id_e)
                 
                 # C. Video clip parcial
                 r_clip = f"temp_scenes/escena_{id_e}.mp4"
